@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">Movie and TV Catalogue</string>
+    <string name="tab_text_1">Movie</string>
+    <string name="tab_text_2">Tv Show</string>
+    <string name="label_date">Date Publish : </string>
+    <string name="label_popularity">Popularity : </string>
+    <string name="overview">Overview</string>
+    <string name="change_language_settings">Change Language Settings</string>
+    <string name="not_supported">this content isn\'t provided in this langueage</string>
+    <string name="this_is_poster">this is poster</string>
+    <string name="this_is_the_backdrop">This is the backdrop</string>
+</resources>
+

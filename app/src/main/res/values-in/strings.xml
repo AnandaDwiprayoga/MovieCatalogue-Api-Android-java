@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">Film dan TV Katalog</string>
+    <string name="tab_text_1">Film</string>
+    <string name="tab_text_2">Siaran Tv</string>
+    <string name="label_date">Tanggal Rilis : </string>
+    <string name="label_popularity">Kepopuleran : </string>
+    <string name="overview">Gambaran</string>
+    <string name="change_language_settings">Ubah Pengaturan Bahasa</string>
+    <string name="not_supported">konten ini tidak disediakan dalam bahasa ini</string>
+    <string name="this_is_poster">Ini adalah poster</string>
+    <string name="this_is_the_backdrop">Ini adalah foto belakang</string>
+</resources>
+

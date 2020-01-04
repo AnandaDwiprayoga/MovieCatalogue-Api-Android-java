@@ -1,0 +1,284 @@
+/*
+ * Copyright 2018 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package androidx.fragment.app;
+
+import static androidx.annotation.RestrictTo.Scope.LIBRARY_GROUP_PREFIX;
+
+import android.animation.Animator;
+import android.annotation.SuppressLint;
+import android.app.Activity;
+import android.content.ComponentCallbacks;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentSender;
+import android.content.res.Configuration;
+import android.content.res.Resources;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.Parcel;
+import android.os.Parcelable;
+import android.util.AttributeSet;
+import android.util.SparseArray;
+import android.view.ContextMenu;
+import android.view.ContextMenu.ContextMenuInfo;
+import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
+import android.view.View;
+import android.view.View.OnCreateContextMenuListener;
+import android.view.ViewGroup;
+import android.view.animation.Animation;
+import android.widget.AdapterView;
+
+import androidx.annotation.CallSuper;
+import androidx.annotation.ContentView;
+import androidx.annotation.LayoutRes;
+import androidx.annotation.MainThread;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.RestrictTo;
+import androidx.annotation.StringRes;
+import androidx.annotation.UiThread;
+import androidx.core.app.SharedElementCallback;
+import androidx.core.util.DebugUtils;
+import androidx.core.view.LayoutInflaterCompat;
+import androidx.lifecycle.HasDefaultViewModelProviderFactory;
+import androidx.lifecycle.Lifecycle;
+import androidx.lifecycle.LifecycleEventObserver;
+import androidx.lifecycle.LifecycleOwner;
+import androidx.lifecycle.LifecycleRegistry;
+import androidx.lifecycle.LiveData;
+import androidx.lifecycle.MutableLiveData;
+import androidx.lifecycle.SavedStateViewModelFactory;
+import androidx.lifecycle.ViewModelProvider;
+import androidx.lifecycle.ViewModelStore;
+import androidx.lifecycle.ViewModelStoreOwner;
+import androidx.loader.app.LoaderManager;
+import androidx.savedstate.SavedStateRegistry;
+import androidx.savedstate.SavedStateRegistryController;
+import androidx.savedstate.SavedStateRegistryOwner;
+
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
+import java.lang.reflect.InvocationTargetException;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Static library support version of the framework's {@link android.app.Fragment}.
+ * Used to write apps that run on platforms prior to Android 3.0.  When running
+ * on Android 3.0 or above, this implementation is still used; it does not try
+ * to switch to the framework's implementation. See the framework {@link android.app.Fragment}
+ * documentation for a class overview.
+ *
+ * <p>The main differences when using this support version instead of the framework version are:
+ * <ul>
+ *  <li>Your activity must extend {@link FragmentActivity}
+ *  <li>You must call {@link FragmentActivity#getSupportFragmentManager} to get the
+ *  {@link FragmentManager}
+ * </ul>
+ *
+ */
+public class Fragment implements ComponentCallbacks, OnCreateContextMenuListener, LifecycleOwner,
+        ViewModelStoreOwner, HasDefaultViewModelProviderFactory, SavedStateRegistryOwner {
+
+    static final Object USE_DEFAULT_TRANSITION = new Object();
+
+    static final int INITIALIZING = 0;     // Not yet created.
+    static final int CREATED = 1;          // Created.
+    static final int ACTIVITY_CREATED = 2; // Fully created, not started.
+    static final int STARTED = 3;          // Created and started, not resumed.
+    static final int RESUMED = 4;          // Created started and resumed.
+
+    int mState = INITIALIZING;
+
+    // When instantiated from saved state, this is the saved state.
+    Bundle mSavedFragmentState;
+    SparseArray<Parcelable> mSavedViewState;
+    // If the userVisibleHint is changed before the state is set,
+    // it is stored here
+    @Nullable Boolean mSavedUserVisibleHint;
+
+    // Internal unique name for this fragment;
+    @NonNull
+    String mWho = UUID.randomUUID().toString();
+
+    // Construction arguments;
+    Bundle mArguments;
+
+    // Target fragment.
+    Fragment mTarget;
+
+    // For use when retaining a fragment: this is the who of the last mTarget.
+    String mTargetWho = null;
+
+    // Target request code.
+    int mTargetRequestCode;
+
+    // Boolean indicating whether this Fragment is the primary navigation fragment
+    private Boolean mIsPrimaryNavigationFragment = null;
+
+    // True if the fragment is in the list of added fragments.
+    boolean mAdded;
+
+    // If set this fragment is being removed from its activity.
+    boolean mRemoving;
+
+    // Set to true if this fragment was instantiated from a layout file.
+    boolean mFromLayout;
+
+    // Set to true when the view has actually been inflated in its layout.
+    boolean mInLayout;
+
+    // True if this fragment has been restored from previously saved state.
+    boolean mRestored;
+
+    // True if performCreateView has been called and a matching call to performDestroyView
+    // has not yet happened.
+    boolean mPerformedCreateView;
+
+    // Number of active back stack entries this fragment is in.
+    int mBackStackNesting;
+
+    // The fragment manager we are associated with.  Set as soon as the
+    // fragment is used in a transaction; cleared after it has been removed
+    // from all transactions.
+    FragmentManager mFragmentManager;
+
+    // Host this fragment is attached to.
+    FragmentHostCallback<?> mHost;
+
+    // Private fragment manager for child fragments inside of this one.
+    @NonNull
+    FragmentManager mChildFragmentManager = new FragmentManagerImpl();
+
+    // If this Fragment is contained in another Fragment, this is that container.
+    Fragment mParentFragment;
+
+    // The optional identifier for this fragment -- either the container ID if it
+    // was dynamically added to the view hierarchy, or the ID supplied in
+    // layout.
+    int mFragmentId;
+
+    // When a fragment is being dynamically added to the view hierarchy, this
+    // is the identifier of the parent container it is being added to.
+    int mContainerId;
+
+    // The optional named tag for this fragment -- usually used to find
+    // fragments that are not part of the layout.
+    String mTag;
+
+    // Set to true when the app has requested that this fragment be hidden
+    // from the user.
+    boolean mHidden;
+
+    // Set to true when the app has requested that this fragment be deactivated.
+    boolean mDetached;
+
+    // If set this fragment would like its instance retained across
+    // configuration changes.
+    boolean mRetainInstance;
+
+    // If set this fragment changed its mRetainInstance while it was detached
+    boolean mRetainInstanceChangedWhileDetached;
+
+    // If set this fragment has menu items to contribute.
+    boolean mHasMenu;
+
+    // Set to true to allow the fragment's menu to be shown.
+    boolean mMenuVisible = true;
+
+    // Used to verify that subclasses call through to super class.
+    private boolean mCalled;
+
+    // The parent container of the fragment after dynamically added to UI.
+    ViewGroup mContainer;
+
+    // The View generated for this fragment.
+    View mView;
+
+    // Whether this fragment should defer starting until after other fragments
+    // have been started and their loaders are finished.
+    boolean mDeferStart;
+
+    // Hint provided by the app that this fragment is currently visible to the user.
+    boolean mUserVisibleHint = true;
+
+    // The animation and transition information for the fragment. This will be null
+    // unless the elements are explicitly accessed and should remain null for Fragments
+    // without Views.
+    AnimationInfo mAnimationInfo;
+
+    // Runnable that is used to indicate if the Fragment has a postponed transition that is on a
+    // timeout.
+    Runnable mPostponedDurationRunnable = new Runnable() {
+        @Override
+        public void run() {
+            startPostponedEnterTransition();
+        }
+    };
+
+    // True if the View was added, and its animation has yet to be run. This could
+    // also indicate that the fragment view hasn't been made visible, even if there is no
+    // animation for this fragment.
+    boolean mIsNewlyAdded;
+
+    // True if mHidden has been changed and the animation should be scheduled.
+    boolean mHiddenChanged;
+
+    // The alpha of the view when the view was added and then postponed. If the value is less
+    // than zero, this means that the view's add was canceled and should not participate in
+    // removal animations.
+    float mPostponedAlpha;
+
+    // The cached value from onGetLayoutInflater(Bundle) that will be returned from
+    // getLayoutInflater()
+    LayoutInflater mLayoutInflater;
+
+    // Keep track of whether or not this Fragment has run performCreate(). Retained instance
+    // fragments can have mRetaining set to true without going through creation, so we must
+    // track it separately.
+    boolean mIsCreated;
+
+    // Max Lifecycle state this Fragment can achieve.
+    Lifecycle.State mMaxState = Lifecycle.State.RESUMED;
+
+    LifecycleRegistry mLifecycleRegistry;
+
+    // This is initialized in performCreateView and unavailable outside of the
+    // onCreateView/onDestroyView lifecycle
+    @Nullable FragmentViewLifecycleOwner mViewLifecycleOwner;
+    MutableLiveData<LifecycleOwner> mViewLifecycleOwnerLiveData = new MutableLiveData<>();
+
+    private ViewModelProvider.Factory mDefaultFactory;
+
+    SavedStateRegistryController mSavedStateRegistryController;
+
+    @LayoutRes
+    private int mContentLayoutId;
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Overriding this method is no longer supported and this method will be made
+     * <code>final</code> in a future version of Fragment.
+     */
+    @Override
+  
